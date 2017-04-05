@@ -172,6 +172,8 @@
   #include "pins_MKS_13.h"
 #elif MB(SAINSMART_2IN1)
   #include "pins_SAINSMART_2IN1.h"
+#elif MB(DISCOEASY)
+  #include "pins_DISCOEASY.h"
 #else
   #error "Unknown MOTHERBOARD value set in Configuration.h"
 #endif
