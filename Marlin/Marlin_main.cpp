@@ -457,6 +457,12 @@ static uint8_t target_extruder;
 #if ENABLED(FILAMENT_RUNOUT_SENSOR)
   static bool filament_ran_out = false;
 #endif
+#if ENABLED(SUMMON_PRINT_PAUSE)
+  static bool print_pause_summoned = false;
+  #if ENABLED(FILAMENT_RUNOUT_SENSOR)
+    static bool filrunout_bypassed = false;
+  #endif
+#endif
 
 static bool send_ok[BUFSIZE];
 
@@ -744,6 +750,16 @@ void servo_init() {
   void enableStepperDrivers() { pinMode(STEPPER_RESET_PIN, INPUT); }  // set to input, which allows it to be pulled high by pullups
 #endif
 
+#if ENABLED( ONE_LED )
+  inline void one_led_on() {
+    digitalWrite( ONE_LED_PIN, true ^ ONE_LED_INVERTING );
+  }
+
+  inline void one_led_off() {
+    digitalWrite( ONE_LED_PIN, false ^ ONE_LED_INVERTING );
+  }
+#endif
+
 /**
  * Marlin entry-point: Set up before the program loop
  *  - Set up the kill pin, filament runout, power hold
@@ -864,6 +880,22 @@ void setup() {
     pinMode(STAT_LED_BLUE, OUTPUT);
     digitalWrite(STAT_LED_BLUE, LOW); // turn it off
   #endif
+
+  #if ENABLED(SUMMON_PRINT_PAUSE) && SUMMON_PRINT_PAUSE_PIN != X_MIN_PIN && SUMMON_PRINT_PAUSE_PIN != Y_MAX_PIN && SUMMON_PRINT_PAUSE_PIN != Z_MIN_PIN
+    SET_INPUT(SUMMON_PRINT_PAUSE_PIN);
+    WRITE(SUMMON_PRINT_PAUSE_PIN, HIGH);
+
+    #if ENABLED(FILAMENT_RUNOUT_SENSOR)
+      delay( 100 );
+      if ( READ( SUMMON_PRINT_PAUSE_PIN ) ^ SUMMON_PRINT_PAUSE_INVERTING ) {
+          filrunout_bypassed = true;
+          SERIAL_ECHOLN( PSTR("Filament sensor bypassed") );
+      }
+    #endif
+  #elif ENABLED(ONE_BUTTON)
+    SET_INPUT(ONE_BUTTON_PIN);
+    WRITE(ONE_BUTTON_PIN, HIGH);
+  #endif
   #if ENABLED( DELTA_EXTRA )
     #if ENABLED( ONE_BUTTON )
       // Read the button state here
@@ -882,6 +914,12 @@ void setup() {
       }
     #endif
   #endif
+
+  #if ENABLED( ONE_LED )
+    pinMode( ONE_LED_PIN, OUTPUT );
+    one_led_off();
+  #endif
+
 }
 
 /**
@@ -897,7 +935,7 @@ void setup() {
 void loop() {
   if (commands_in_queue < BUFSIZE) get_available_commands();
 
-  #if ENABLED(SDSUPPORT)
+  #if ENABLED(SDSUPPORT) && DISABLED(ONE_BUTTON)
     card.checkautostart(false);
   #endif
 
@@ -1111,7 +1149,9 @@ inline void get_serial_commands() {
           SERIAL_ECHOLN(time);
           lcd_setstatus(time, true);
           card.printingHasFinished();
+          #if DISABLED(ONE_BUTTON)
           card.checkautostart(true);
+          #endif
         }
         if (sd_char == '#') stop_buffering = true;
 
@@ -6390,6 +6430,10 @@ inline void gcode_M503() {
     if (degHotend(active_extruder) < extrude_min_temp) {
       SERIAL_ERROR_START;
       SERIAL_ERRORLNPGM(MSG_TOO_COLD_FOR_M600);
+      #if ENABLED(SUMMON_PRINT_PAUSE)
+        print_pause_summoned = false;
+      #endif
+
       return;
     }
 
@@ -6526,6 +6570,10 @@ inline void gcode_M503() {
 
     #if ENABLED(FILAMENT_RUNOUT_SENSOR)
       filament_ran_out = false;
+    #endif
+
+    #if ENABLED(SUMMON_PRINT_PAUSE)
+      print_pause_summoned = false;
     #endif
 
   }
@@ -8695,6 +8743,170 @@ void disable_all_steppers() {
   disable_e3();
 }
 
+#if ENABLED(ONE_BUTTON)
+
+  millis_t next_one_button_check = 0;
+  bool asked_to_print = false;
+  bool asked_to_pause = false;
+  millis_t has_to_print_timeout = 0;
+
+#endif
+
+#if ENABLED(ONE_LED)
+
+  int state_blink = 0;
+  millis_t next_one_led_tick = 0;
+  bool notify_warning = false;
+  millis_t notify_warning_timeout = 0;
+
+  inline void set_notify_warning() {
+    notify_warning = true;
+    notify_warning_timeout = millis() + 2000UL;
+  }
+
+  inline void manage_one_led() {
+    millis_t now = millis();
+    if ( PENDING( now, next_one_led_tick ) ) return;
+
+    state_blink = ( state_blink + 1 ) % 10;
+    next_one_led_tick = now + 150UL;
+
+    if ( startup_auto_calibration ) {
+      switch( state_blink ) {
+        case 0:
+          one_led_on();
+          break;
+        default:
+          one_led_off();
+      }
+    }
+    #if ENABLED( ONE_BUTTON )
+    else if ( asked_to_print ) {
+      one_led_on();
+    }
+    #endif
+    else if ( notify_warning ) {
+      state_blink % 2 ? one_led_on() : one_led_off();
+      if ( ELAPSED(now, notify_warning_timeout) ) {
+        notify_warning = false;
+      }
+    }
+    else if (
+      false
+      #if ENABLED(SUMMON_PRINT_PAUSE)
+      || print_pause_summoned
+      #endif
+      #if ENABLED(FILAMENT_RUNOUT_SENSOR)
+      || filament_ran_out
+      #endif
+    ) {
+      switch( state_blink ) {
+        case 0:
+        case 2:
+          one_led_on();
+          break;
+        default:
+          one_led_off();
+      }
+    }
+    else {
+      if ( IS_SD_PRINTING ) {
+        one_led_on();
+      }
+      else {
+        one_led_off();
+      }
+    }
+  }
+#endif
+
+#if ENABLED(SUMMON_PRINT_PAUSE)
+
+  inline void manage_pause_summoner() {
+    // PAUSE PUSHED
+    if (!print_pause_summoned
+      #if ENABLED( FILAMENT_RUNOUT_SENSOR )
+      && !filament_ran_out
+      #endif
+      #if ENABLED( ONE_BUTTON )
+      && !asked_to_print
+      #endif
+      ) {
+      if (
+        IS_SD_PRINTING
+        && ( READ(SUMMON_PRINT_PAUSE_PIN) ^ SUMMON_PRINT_PAUSE_INVERTING )
+        && axis_homed[X_AXIS]
+        && axis_homed[Y_AXIS]
+        && axis_homed[Z_AXIS]
+        ) {
+          print_pause_summoned = true;
+          enqueue_and_echo_commands_P(PSTR(SUMMON_PRINT_PAUSE_SCRIPT));
+      }
+    }
+  }
+
+#endif // SUMMON_PRINT_PAUSE
+
+#if ENABLED(ONE_BUTTON)
+
+  inline void manage_one_button() {
+    // De-Bounce bouton press
+    millis_t now = millis();
+    if (PENDING(now, next_one_button_check)) return;
+    next_one_button_check = now + 100UL;
+
+    if ( IS_SD_PRINTING
+      && asked_to_print
+      && !( READ(ONE_BUTTON_PIN) ^ ONE_BUTTON_INVERTING )
+    ) {
+      asked_to_print = false;
+    }
+
+    if ( !IS_SD_PRINTING
+      && asked_to_print
+      && !( READ(ONE_BUTTON_PIN) ^ ONE_BUTTON_INVERTING )
+      && ELAPSED(now, has_to_print_timeout)
+    ) {
+      asked_to_print = false;
+      #if ENABLED(ONE_LED)
+        set_notify_warning();
+      #endif
+    }
+
+    if ( !startup_auto_calibration
+      && !IS_SD_PRINTING
+      && !asked_to_print
+      && ( READ(ONE_BUTTON_PIN) ^ ONE_BUTTON_INVERTING )
+    ) {
+      // Warns user if no filament at start/resume.
+      #if HAS_FILRUNOUT
+        if( !(READ(FILRUNOUT_PIN) ^ FIL_RUNOUT_INVERTING) ) {
+          set_notify_warning();
+          return;
+        }
+      #endif
+
+      #if ENABLED( FILAMENT_RUNOUT_SENSOR )
+        filrunout_bypassed = false;
+      #endif
+      asked_to_print = true;
+      has_to_print_timeout = now + 2500UL;
+
+      #if ENABLED(ONE_LED)
+        one_led_on();
+      #endif
+
+      card.autostart_index = 0;
+      card.cardOK = false;
+      card.checkautostart( true );
+
+      #if ENABLED(ONE_LED)
+        if ( !card.cardOK ) set_notify_warning();
+      #endif
+    }
+  }
+#endif
+
 /**
  * Standard idle routine keeps the machine alive
  */
@@ -8704,6 +8916,15 @@ void idle(
   #endif
 ) {
   manage_heater();
+  #if ENABLED(SUMMON_PRINT_PAUSE)
+  manage_pause_summoner();
+  #endif
+  #if ENABLED(ONE_BUTTON)
+  manage_one_button();
+  #endif
+  #if ENABLED(ONE_LED)
+  manage_one_led();
+  #endif
   manage_inactivity(
     #if ENABLED(FILAMENTCHANGEENABLE)
       no_stepper_sleep
@@ -8728,8 +8949,19 @@ void idle(
 void manage_inactivity(bool ignore_stepper_queue/*=false*/) {
 
   #if HAS_FILRUNOUT
-    if (IS_SD_PRINTING && !(READ(FILRUNOUT_PIN) ^ FIL_RUNOUT_INVERTING))
+    if (
+      IS_SD_PRINTING
+      #if ENABLED( SUMMON_PRINT_PAUSE )
+      && !filrunout_bypassed
+      && !print_pause_summoned
+      #endif
+      && !(READ(FILRUNOUT_PIN) ^ FIL_RUNOUT_INVERTING)
+      && axis_homed[X_AXIS]
+      && axis_homed[Y_AXIS]
+      && axis_homed[Z_AXIS]
+      ) {
       handle_filament_runout();
+    }
   #endif
 
   if (commands_in_queue < BUFSIZE) get_available_commands();
@@ -8929,11 +9161,19 @@ void kill(const char* lcd_msg) {
   // FMC small patch to update the LCD before ending
   sei();   // enable interrupts
   for (int i = 5; i--; lcd_update()) delay(200); // Wait a short time
-  cli();   // disable interrupts
+  #if DISABLED( ONE_LED )
+    cli();   // disable interrupts
+  #endif
   suicide();
   while (1) {
     #if ENABLED(USE_WATCHDOG)
       watchdog_reset();
+    #endif
+    #if ENABLED( ONE_LED )
+      one_led_on();
+      delay(70);
+      one_led_off();
+      delay(140);
     #endif
   } // Wait for reset
 }
