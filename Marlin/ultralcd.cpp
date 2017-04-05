@@ -103,6 +103,7 @@ static void lcd_status_screen();
   #if ENABLED(AUTO_BED_LEVELING_FEATURE)
     static void lcd_set_z_offsets();
   #endif
+  static void lcd_prepare_advanced_menu();
 
   #if ENABLED(HAS_LCD_CONTRAST)
     static void lcd_set_contrast();
@@ -1157,6 +1158,10 @@ void lcd_parallel_x(){
     END_MENU();
   }
 
+  /**
+   * Step 1: MBL entry-point: "Cancel" or "Level Bed"
+   */
+
 #endif  // MANUAL_BED_LEVELING
 
 /**
@@ -1164,6 +1169,15 @@ void lcd_parallel_x(){
  * "Prepare" submenu
  *
  */
+
+ //Préparer
+   // Déplacer un axes
+   // Préchanffage PLA
+   // Réglage Offset
+   // Refroidir
+   // Eteindre alim.
+   // Tout le reste : Réglages avancés
+     // Préchauffage ABS
 
 static void lcd_prepare_menu() {
   START_MENU();
@@ -1173,16 +1187,24 @@ static void lcd_prepare_menu() {
   //
   MENU_ITEM(back, MSG_MAIN);
 
-  //
-  // Auto Home
-  //
-  MENU_ITEM(gcode, MSG_AUTO_HOME, PSTR("G28"));
 
   //
-  // Set Home Offsets
+  // Move Axis
   //
-  MENU_ITEM(function, MSG_SET_HOME_OFFSETS, lcd_set_home_offsets);
-  //MENU_ITEM(gcode, MSG_SET_ORIGIN, PSTR("G92 X0 Y0 Z0"));
+  MENU_ITEM(submenu, MSG_MOVE_AXIS, lcd_move_menu);
+
+  //
+  // Preheat PLA
+  // Preheat ABS
+  //
+  #if TEMP_SENSOR_0 != 0
+    #if TEMP_SENSOR_1 != 0 || TEMP_SENSOR_2 != 0 || TEMP_SENSOR_3 != 0 || TEMP_SENSOR_BED != 0
+      MENU_ITEM(submenu, MSG_PREHEAT_PLA, lcd_preheat_pla_menu);
+    #else
+      MENU_ITEM(function, MSG_PREHEAT_PLA, lcd_preheat_pla0);
+    #endif
+  #endif
+
   #if ENABLED(PARALLEL_X_FEATURE)
     MENU_ITEM(function, MSG_PARALLEL_X, lcd_parallel_x);
   #endif
@@ -1194,30 +1216,6 @@ static void lcd_prepare_menu() {
     MENU_ITEM(submenu, MSG_Z_OFFSET, lcd_set_z_offsets);
   #endif
 
-
-  //
-  // Move Axis
-  //
-  MENU_ITEM(submenu, MSG_MOVE_AXIS, lcd_move_menu);
-
-  //
-  // Disable Steppers
-  //
-  MENU_ITEM(gcode, MSG_DISABLE_STEPPERS, PSTR("M84"));
-
-  //
-  // Preheat PLA
-  // Preheat ABS
-  //
-  #if TEMP_SENSOR_0 != 0
-    #if TEMP_SENSOR_1 != 0 || TEMP_SENSOR_2 != 0 || TEMP_SENSOR_3 != 0 || TEMP_SENSOR_BED != 0
-      MENU_ITEM(submenu, MSG_PREHEAT_PLA, lcd_preheat_pla_menu);
-      MENU_ITEM(submenu, MSG_PREHEAT_ABS, lcd_preheat_abs_menu);
-    #else
-      MENU_ITEM(function, MSG_PREHEAT_PLA, lcd_preheat_pla0);
-      MENU_ITEM(function, MSG_PREHEAT_ABS, lcd_preheat_abs0);
-    #endif
-  #endif
 
   //
   // Cooldown
@@ -1233,6 +1231,57 @@ static void lcd_prepare_menu() {
     else
       MENU_ITEM(gcode, MSG_SWITCH_PS_ON, PSTR("M80"));
   #endif
+
+  MENU_ITEM(submenu, MSG_PREPARE_ADVENCED, lcd_prepare_advanced_menu);
+
+  END_MENU();
+}
+
+static void lcd_prepare_advanced_menu() {
+  START_MENU();
+
+  //
+  // ^ Main
+  //
+  MENU_ITEM(back, MSG_MAIN);
+  //
+  // Auto Home
+  //
+  MENU_ITEM(gcode, MSG_AUTO_HOME, PSTR("G28"));
+
+  //
+  // Level Bed
+  //
+  #if ENABLED(AUTO_BED_LEVELING_FEATURE)
+    MENU_ITEM(gcode, MSG_LEVEL_BED,
+      axis_homed[X_AXIS] && axis_homed[Y_AXIS] ? PSTR("G29") : PSTR("G28\nG29")
+    );
+  #elif ENABLED(MANUAL_BED_LEVELING)
+    MENU_ITEM(submenu, MSG_LEVEL_BED, lcd_level_bed);
+  #endif
+
+  //
+  // Preheat PLA
+  // Preheat ABS
+  //
+  #if TEMP_SENSOR_0 != 0
+    #if TEMP_SENSOR_1 != 0 || TEMP_SENSOR_2 != 0 || TEMP_SENSOR_3 != 0 || TEMP_SENSOR_BED != 0
+      MENU_ITEM(submenu, MSG_PREHEAT_ABS, lcd_preheat_abs_menu);
+    #else
+      MENU_ITEM(function, MSG_PREHEAT_ABS, lcd_preheat_abs0);
+    #endif
+  #endif
+
+  //
+  // Set Home Offsets
+  //
+  MENU_ITEM(function, MSG_SET_HOME_OFFSETS, lcd_set_home_offsets);
+  //MENU_ITEM(gcode, MSG_SET_ORIGIN, PSTR("G92 X0 Y0 Z0"));
+
+  //
+  // Disable Steppers
+  //
+  MENU_ITEM(gcode, MSG_DISABLE_STEPPERS, PSTR("M84"));
 
   //
   // Autostart
@@ -1324,7 +1373,7 @@ static void _lcd_move_callback(const char* name, AxisEnum axis, float min, float
   static void lcd_move_x() { _lcd_move(PSTR(MSG_MOVE_X), X_AXIS, sw_endstop_min[X_AXIS], sw_endstop_max[X_AXIS]); }
   static void lcd_move_y() { _lcd_move(PSTR(MSG_MOVE_Y), Y_AXIS, sw_endstop_min[Y_AXIS], sw_endstop_max[Y_AXIS]); }
 #endif
-static void lcd_move_z() { _lcd_move(PSTR(MSG_MOVE_Z), Z_AXIS, sw_endstop_min[Z_AXIS], sw_endstop_max[Z_AXIS]); }
+static void lcd_move_z() { _lcd_move(PSTR(MSG_MOVE_Z), Z_AXIS, sw_endstop_min[Z_AXIS], sw_endstop_max[Z_AXIS]); SERIAL_ERRORLN("lcdZConf"); }
 static void lcd_move_e(
   #if EXTRUDERS > 1
     uint8_t e
