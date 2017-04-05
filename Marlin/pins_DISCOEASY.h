@@ -33,8 +33,6 @@
 #define BOARD_NAME "Disco Easy"
 #undef HEATER_1_PIN
 #define HEATER_1_PIN -1
-#undef PRINTER_HEAD_EASY_CONSTANT_FAN_PIN
-#define PRINTER_HEAD_EASY_CONSTANT_FAN_PIN 7
 #undef X_MAX_PIN
 #define X_MAX_PIN -1
 #undef X_MIN_PIN
@@ -47,4 +45,13 @@
 #define Z_MAX_PIN -1
 #undef Z_MIN_PIN
 #define Z_MIN_PIN 15
-
+#undef Z_MIN_PIN
+#define Z_MIN_PIN 15
+#undef ORIG_E0_AUTO_FAN_PIN
+#define ORIG_E0_AUTO_FAN_PIN 7
+#undef ORIG_E1_AUTO_FAN_PIN
+#define ORIG_E1_AUTO_FAN_PIN -1
+#undef ORIG_E2_AUTO_FAN_PIN
+#define ORIG_E2_AUTO_FAN_PIN -1
+#undef ORIG_E3_AUTO_FAN_PIN
+#define ORIG_E3_AUTO_FAN_PIN -1
