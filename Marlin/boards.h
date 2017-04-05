@@ -94,7 +94,7 @@
 #define BOARD_BAM_DICE          401  // 2PrintBeta BAM&DICE with STK drivers
 #define BOARD_BAM_DICE_DUE      402  // 2PrintBeta BAM&DICE Due with STK drivers
 #define BOARD_BQ_ZUM_MEGA_3D    503  // bq ZUM Mega 3D
-#define BOARD_DISCOEASY         401   // Discoeasy (MKS BASE 1.0 with special layout)
+#define BOARD_DISCOEASY         4001   // Discoeasy (MKS BASE 1.0 with special layout)
 
 #define MB(board) (MOTHERBOARD==BOARD_##board)
 
