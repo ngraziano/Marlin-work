@@ -81,6 +81,10 @@
   #include "twibus.h"
 #endif
 
+#if ENABLED(USE_SECOND_SERIAL)
+  #include "HardwareSerial.h"
+#endif
+
 /**
  * Look here for descriptions of G-codes:
  *  - http://linuxcnc.org/handbook/gcode/g-code.html
@@ -879,6 +883,10 @@ void setup() {
   #ifdef STAT_LED_BLUE
     pinMode(STAT_LED_BLUE, OUTPUT);
     digitalWrite(STAT_LED_BLUE, LOW); // turn it off
+  #endif
+
+  #if ENABLED(USE_SECOND_SERIAL)
+    SECOND_SERIAL.begin( SECOND_SERIAL_BAUDRATE );
   #endif
 
   #if ENABLED(SUMMON_PRINT_PAUSE) && SUMMON_PRINT_PAUSE_PIN != X_MIN_PIN && SUMMON_PRINT_PAUSE_PIN != Y_MAX_PIN && SUMMON_PRINT_PAUSE_PIN != Z_MIN_PIN
