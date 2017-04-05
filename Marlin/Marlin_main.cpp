@@ -3975,6 +3975,8 @@ inline void gcode_G28() {
 
   }
 
+  #endif // END !DELTA_EXTRA
+
   #if DISABLED(Z_PROBE_SLED) // could be avoided
 
     /**
@@ -4000,6 +4002,7 @@ inline void gcode_G28() {
       SERIAL_PROTOCOLPGM(" Z: ");
       SERIAL_PROTOCOL(current_position[Z_AXIS] + 0.0001);
       SERIAL_EOL;
+
 
       clean_up_after_endstop_move(); // Too early. must be done after the stowing.
 
@@ -6460,6 +6463,21 @@ inline void gcode_M503() {
         if (ELAPSED(ms, next_tick)) {
           lcd_quick_feedback();
           next_tick = ms + 2500UL; // feedback every 2.5s while waiting
+          #if ENABLED( DELTA_EXTRA )
+            // Detected if sd is out
+            if ( !card.stillPluggedIn() ) {
+              // Abort current print
+              while( true ) {
+                one_led_on();
+                delay(150);
+                one_led_off();
+                delay(150);
+              }
+              //abort_sd_printing();
+              //enqueue_and_echo_commands_P( PSTR("G28") );
+              return;
+            }
+          #endif
         }
         idle(true);
       #else
@@ -7922,6 +7940,20 @@ void process_next_command() {
       gcode_T(codenum);
       break;
 
+      #if ENABLED( DELTA_EXTRA )
+        case 410:
+          gcode_D410();
+          break;
+        case 851:
+          gcode_D851();
+          break;
+        case 888:
+          gcode_D888();
+          break;
+        case 999:
+          gcode_D999();
+          break;
+      #endif
     default: code_is_good = false;
   }
 
@@ -8001,6 +8033,29 @@ void clamp_to_software_endstops(float target[3]) {
     delta_diagonal_rod_2_tower_1 = sq(diagonal_rod + delta_diagonal_rod_trim_tower_1);
     delta_diagonal_rod_2_tower_2 = sq(diagonal_rod + delta_diagonal_rod_trim_tower_2);
     delta_diagonal_rod_2_tower_3 = sq(diagonal_rod + delta_diagonal_rod_trim_tower_3);
+
+    #if ENABLED( DELTA_EXTRA )
+      #if ENABLED(TRI_SHAPE_PROBING)
+    #error
+        probe_point_XY_x = (delta_tower1_x + delta_tower2_x ) / 2.0;
+        probe_point_XY_y = (delta_tower1_y + delta_tower2_y ) / 2.0;
+
+        probe_point_YZ_x = (delta_tower2_x + delta_tower3_x ) / 2.0;
+        probe_point_YZ_y = (delta_tower2_y + delta_tower3_y ) / 2.0;
+
+        probe_point_ZX_x = (delta_tower3_x + delta_tower1_x ) / 2.0;
+        probe_point_ZX_y = (delta_tower3_y + delta_tower1_y ) / 2.0;
+      #else
+        probe_point_XY_x =  0.0;
+        probe_point_XY_y =  -1.0 * radius;
+
+        probe_point_YZ_x =  SIN_60 * radius;
+        probe_point_YZ_y =  COS_60 * radius;
+
+        probe_point_ZX_x = -SIN_60 * radius;
+        probe_point_ZX_y =  COS_60 * radius;
+      #endif
+    #endif
   }
 
   void calculate_delta(float cartesian[3]) {
@@ -8032,41 +8087,70 @@ void clamp_to_software_endstops(float target[3]) {
 
     // Adjust print surface height by linear interpolation over the bed_level array.
     void adjust_delta(float cartesian[3]) {
-      if (delta_grid_spacing[0] == 0 || delta_grid_spacing[1] == 0) return; // G29 not done!
+      #if DISABLED( DELTA_EXTRA )
+        if (delta_grid_spacing[0] == 0 || delta_grid_spacing[1] == 0) return; // G29 not done!
 
-      int half = (AUTO_BED_LEVELING_GRID_POINTS - 1) / 2;
-      float h1 = 0.001 - half, h2 = half - 0.001,
-            grid_x = max(h1, min(h2, cartesian[X_AXIS] / delta_grid_spacing[0])),
-            grid_y = max(h1, min(h2, cartesian[Y_AXIS] / delta_grid_spacing[1]));
-      int floor_x = floor(grid_x), floor_y = floor(grid_y);
-      float ratio_x = grid_x - floor_x, ratio_y = grid_y - floor_y,
-            z1 = bed_level[floor_x + half][floor_y + half],
-            z2 = bed_level[floor_x + half][floor_y + half + 1],
-            z3 = bed_level[floor_x + half + 1][floor_y + half],
-            z4 = bed_level[floor_x + half + 1][floor_y + half + 1],
-            left = (1 - ratio_y) * z1 + ratio_y * z2,
-            right = (1 - ratio_y) * z3 + ratio_y * z4,
-            offset = (1 - ratio_x) * left + ratio_x * right;
+        int half = (AUTO_BED_LEVELING_GRID_POINTS - 1) / 2;
+        float h1 = 0.001 - half, h2 = half - 0.001,
+              grid_x = max(h1, min(h2, cartesian[X_AXIS] / delta_grid_spacing[0])),
+              grid_y = max(h1, min(h2, cartesian[Y_AXIS] / delta_grid_spacing[1]));
+        int floor_x = floor(grid_x), floor_y = floor(grid_y);
+        float ratio_x = grid_x - floor_x, ratio_y = grid_y - floor_y,
+              z1 = bed_level[floor_x + half][floor_y + half],
+              z2 = bed_level[floor_x + half][floor_y + half + 1],
+              z3 = bed_level[floor_x + half + 1][floor_y + half],
+              z4 = bed_level[floor_x + half + 1][floor_y + half + 1],
+              left = (1 - ratio_y) * z1 + ratio_y * z2,
+              right = (1 - ratio_y) * z3 + ratio_y * z4,
+              offset = (1 - ratio_x) * left + ratio_x * right;
 
-      delta[X_AXIS] += offset;
-      delta[Y_AXIS] += offset;
-      delta[Z_AXIS] += offset;
+        delta[X_AXIS] += offset;
+        delta[Y_AXIS] += offset;
+        delta[Z_AXIS] += offset;
 
-      /**
-      SERIAL_ECHOPGM("grid_x="); SERIAL_ECHO(grid_x);
-      SERIAL_ECHOPGM(" grid_y="); SERIAL_ECHO(grid_y);
-      SERIAL_ECHOPGM(" floor_x="); SERIAL_ECHO(floor_x);
-      SERIAL_ECHOPGM(" floor_y="); SERIAL_ECHO(floor_y);
-      SERIAL_ECHOPGM(" ratio_x="); SERIAL_ECHO(ratio_x);
-      SERIAL_ECHOPGM(" ratio_y="); SERIAL_ECHO(ratio_y);
-      SERIAL_ECHOPGM(" z1="); SERIAL_ECHO(z1);
-      SERIAL_ECHOPGM(" z2="); SERIAL_ECHO(z2);
-      SERIAL_ECHOPGM(" z3="); SERIAL_ECHO(z3);
-      SERIAL_ECHOPGM(" z4="); SERIAL_ECHO(z4);
-      SERIAL_ECHOPGM(" left="); SERIAL_ECHO(left);
-      SERIAL_ECHOPGM(" right="); SERIAL_ECHO(right);
-      SERIAL_ECHOPGM(" offset="); SERIAL_ECHOLN(offset);
-      */
+        /**
+        SERIAL_ECHOPGM("grid_x="); SERIAL_ECHO(grid_x);
+        SERIAL_ECHOPGM(" grid_y="); SERIAL_ECHO(grid_y);
+        SERIAL_ECHOPGM(" floor_x="); SERIAL_ECHO(floor_x);
+        SERIAL_ECHOPGM(" floor_y="); SERIAL_ECHO(floor_y);
+        SERIAL_ECHOPGM(" ratio_x="); SERIAL_ECHO(ratio_x);
+        SERIAL_ECHOPGM(" ratio_y="); SERIAL_ECHO(ratio_y);
+        SERIAL_ECHOPGM(" z1="); SERIAL_ECHO(z1);
+        SERIAL_ECHOPGM(" z2="); SERIAL_ECHO(z2);
+        SERIAL_ECHOPGM(" z3="); SERIAL_ECHO(z3);
+        SERIAL_ECHOPGM(" z4="); SERIAL_ECHO(z4);
+        SERIAL_ECHOPGM(" left="); SERIAL_ECHO(left);
+        SERIAL_ECHOPGM(" right="); SERIAL_ECHO(right);
+        SERIAL_ECHOPGM(" offset="); SERIAL_ECHOLN(offset);
+        */
+      #else // if DELTA_EXTRA
+        if ( ! postcompute_tri_ready ) return;
+
+        if ( cartesian[Z_AXIS] > z_smooth_tri_leveling_height ) return;
+
+        // Find the index tri for z correction
+        int idx = triangle_index( cartesian[X_AXIS], cartesian[Y_AXIS] );
+
+        // -(pp.x * m.x + pp.y * m.y + pp.d) / pp.z;
+        float offset = - (
+            probed_tri_postcompute_nx[ idx ] * cartesian[X_AXIS]
+          + probed_tri_postcompute_ny[ idx ] * cartesian[Y_AXIS]
+          + probed_tri_postcompute_d [ idx ]
+        ) / probed_tri_postcompute_nz[ idx ] ;
+
+        // Adjust final-offset againt Z altitude
+        // to reduce it after 0.6mm
+        offset *= ( z_smooth_tri_leveling_height - cartesian[Z_AXIS] ) / z_smooth_tri_leveling_height;
+
+        delta[X_AXIS] += offset;
+        delta[Y_AXIS] += offset;
+        delta[Z_AXIS] += offset;
+
+        delta[X_AXIS] += zprobe_zoffset;
+        delta[Y_AXIS] += zprobe_zoffset;
+        delta[Z_AXIS] += zprobe_zoffset;
+
+      #endif // End DELTA_EXTRA
     }
   #endif // AUTO_BED_LEVELING_FEATURE
 
