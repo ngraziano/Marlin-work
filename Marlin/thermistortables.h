@@ -112,6 +112,15 @@
 #if ANY_THERMISTOR_IS(147) // Pt100 with 4k7 pullup
   #include "thermistortable_147.h"
 #endif
+
+#if ANY_THERMISTOR_IS(16) // 100K thermistor - Alternative ATC Semitec 104GT-2 (4.7k pullup) Dagoma.Fr version (measured/tested/approved)
+  #include "thermistortable_16.h"
+#endif
+
+#if ANY_THERMISTOR_IS(17) // 100K thermistor - Alternative ATC Semitec 104GT-2 (4.7k pullup) Dagoma.Fr - MKS_Base - version (measured/tested/approved)
+  #include "thermistortable_17.h"
+#endif
+
 #if ANY_THERMISTOR_IS(1010) // Pt1000 with 1k0 pullup
   #include "thermistortable_1010.h"
 #endif
