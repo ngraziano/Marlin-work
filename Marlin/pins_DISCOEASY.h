@@ -24,11 +24,13 @@
  * DiscoEasy (MKS_BASE with special pinout)
  */
 
-#define BOARD_NAME "Disco Easy"
+
 
 #include "pins_MKS_BASE.h"
 
 // redfine for DISCOEASY
+#undef BOARD_NAME
+#define BOARD_NAME "Disco Easy"
 #undef HEATER_1_PIN
 #define HEATER_1_PIN -1
 #undef PRINTER_HEAD_EASY_CONSTANT_FAN_PIN
