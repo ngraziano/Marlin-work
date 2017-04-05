@@ -235,6 +235,17 @@
  * M365 - SCARA calibration: Scaling factor, X, Y, Z axis
  * ************* SCARA End ***************
  *
+ * ************ DAGOMA.FR Specific - This can change to suit future G-code regulations
+ * M700 - Wifi : Set SSID to use.
+ * M701 - Wifi : Set Password to use and connect !
+ * M702 - Wifi : Get current local IP Address if wifi is ready, 0 otherwize.
+ * M710 - Wifi : Set printer technical name.
+ * M711 - Wifi : Set API Url to use.
+ * M712 - Wifi : Set API Key to use.
+ * M720 - Wifi : Echo the string in serial .
+
+ * ************ DAGOMA.FR End ***************
+ *
  * ************ Custom codes - This can change to suit future G-code regulations
  * M100 - Watch Free Memory (For Debugging Only)
  * M851 - Set Z probe's Z offset (mm above extruder -- The value will always be negative)
@@ -247,6 +258,7 @@
  *
  * T0-T3 - Select a tool by index (usually an extruder) [ F<mm/min> ]
  *
+
  */
 
 #if ENABLED(M100_FREE_MEMORY_WATCHER)
@@ -1303,6 +1315,17 @@ inline void get_serial_commands() {
              ) && !sd_comment_mode)
 
       ) {
+        if (sd_char == '#') stop_buffering = true;
+
+        sd_comment_mode = false; //for new command
+
+        if (sd_count) {
+          command_queue[cmd_queue_index_w][sd_count] = '\0'; //terminate string
+          sd_count = 0; //clear buffer
+
+          _commit_command(false);
+        }
+
         if (card_eof) {
           SERIAL_PROTOCOLLNPGM(MSG_FILE_PRINTED);
           print_job_timer.stop();
@@ -1318,16 +1341,8 @@ inline void get_serial_commands() {
           card.checkautostart(true);
           #endif
         }
-        if (sd_char == '#') stop_buffering = true;
-
-        sd_comment_mode = false; //for new command
 
         if (!sd_count) continue; //skip empty lines
-
-        command_queue[cmd_queue_index_w][sd_count] = '\0'; //terminate string
-        sd_count = 0; //clear buffer
-
-        _commit_command(false);
       }
       else if (sd_count >= MAX_CMD_SIZE - 1) {
         /**
