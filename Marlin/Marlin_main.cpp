@@ -6571,6 +6571,9 @@ inline void gcode_M503() {
    *  X[position] - Move to this X position, with Y
    *  Y[position] - Move to this Y position, with X
    *  L[distance] - Retract distance for removal (manual reload)
+   *  P[pin]      - Pin to wait for, if not specified use lcd button
+   *              - Pin can be A, B or C respectively for X, Y and Z endstops.
+   *  S[0|1]      - If Pin, state to wait for, if not specified use LOW
    *
    *  Default values are used for omitted arguments.
    *
@@ -6580,6 +6583,11 @@ inline void gcode_M503() {
     if (degHotend(active_extruder) < extrude_min_temp) {
       SERIAL_ERROR_START;
       SERIAL_ERRORLNPGM(MSG_TOO_COLD_FOR_M600);
+
+      #if ENABLED(FILAMENT_RUNOUT_SENSOR)
+        filament_ran_out = false;
+      #endif
+
       #if ENABLED(SUMMON_PRINT_PAUSE)
         print_pause_summoned = false;
       #endif
@@ -6590,6 +6598,8 @@ inline void gcode_M503() {
     float lastpos[NUM_AXIS];
     #if ENABLED(DELTA)
       float fr60 = feedrate / 60;
+    #else
+      float fr = feedrate;
     #endif
 
     for (int i = 0; i < NUM_AXIS; i++)
@@ -6599,8 +6609,11 @@ inline void gcode_M503() {
       #define RUNPLAN calculate_delta(destination); \
                       plan_buffer_line(delta[X_AXIS], delta[Y_AXIS], delta[Z_AXIS], destination[E_AXIS], fr60, active_extruder);
     #else
-      #define RUNPLAN line_to_destination();
+      #define RUNPLAN line_to_destination(fr);
     #endif
+
+    //finish moves
+    // st_synchronize();
 
     //retract by E
     if (code_seen('E')) destination[E_AXIS] += code_value();
@@ -6608,7 +6621,21 @@ inline void gcode_M503() {
       else destination[E_AXIS] += FILAMENTCHANGE_FIRSTRETRACT;
     #endif
 
+    // First retract step must be done quickly to avoid melted material in the ptfe/nozzle...
+    #if ENABLED(DELTA)
+      fr60 *= FILAMENTCHANGE_FEEDRATE_MULTIPLICATOR;
+    #elif ENABLED(FILAMENT_RUNOUT_SENSOR)
+      fr *= FILAMENTCHANGE_FEEDRATE_MULTIPLICATOR;
+    #endif
+
     RUNPLAN;
+
+    // After first retract step, we set back fr60 to its initial value...
+    #if ENABLED(DELTA)
+      fr60 /= FILAMENTCHANGE_FEEDRATE_MULTIPLICATOR;
+    #elif ENABLED(FILAMENT_RUNOUT_SENSOR)
+      fr /= FILAMENTCHANGE_FEEDRATE_MULTIPLICATOR;
+    #endif
 
     //lift Z
     if (code_seen('Z')) destination[Z_AXIS] += code_value();
@@ -6617,6 +6644,10 @@ inline void gcode_M503() {
     #endif
 
     RUNPLAN;
+
+    // #if ENABLED(DELTA)
+    //   fr60 = homing_feedrate[ Z_AXIS ];
+    // #endif
 
     //move xy
     if (code_seen('X')) destination[X_AXIS] = code_value();
@@ -6640,23 +6671,94 @@ inline void gcode_M503() {
 
     //finish moves
     st_synchronize();
+
+    // DAGOMA added
+    // Determine exit/pin state after moving away
+    int pin_number = -1;
+    int target = -1;
+    if (code_seen('P')) {
+      char nextChar = *(seen_pointer + 1);
+      if (nextChar == 'A') {
+        pin_number = X_MIN_PIN;
+      }
+      else if (nextChar == 'B') {
+        pin_number = Y_MAX_PIN;
+      }
+      else if (nextChar == 'C') {
+        pin_number = Z_MIN_PIN;
+      }
+      else {
+        pin_number = code_value();
+      }
+
+      int pin_state = code_seen('S') ? code_value() : -1; // required pin state - default is inverted
+
+      if (pin_state >= -1 && pin_state <= 1) {
+
+        // DAGOMA - byPass sensitive pin
+        /*
+        for (uint8_t i = 0; i < COUNT(sensitive_pins); i++) {
+          if (sensitive_pins[i] == pin_number) {
+            pin_number = -1;
+            break;
+          }
+        }
+        */
+        if (pin_number > -1) {
+          target = LOW;
+
+          //pinMode(pin_number, INPUT);
+
+          switch (pin_state) {
+            case 1:
+              target = HIGH;
+              break;
+
+            case 0:
+              target = LOW;
+              break;
+
+            case -1:
+              target = !digitalRead(pin_number);
+              break;
+          }
+        } // pin_number > -1
+      } // pin_state -1 0 1
+    } // code_seen('P')
+    // END DAGOMA added
+
+
+
     //disable extruder steppers so filament can be removed
     disable_e0();
     disable_e1();
     disable_e2();
     disable_e3();
     delay(100);
+    #if DISABLED(NO_LCD_FOR_FILAMENTCHANGEABLE)
     LCD_ALERTMESSAGEPGM(MSG_FILAMENTCHANGE);
+    #endif
     #if DISABLED(AUTO_FILAMENT_CHANGE)
       millis_t next_tick = 0;
     #endif
     KEEPALIVE_STATE(PAUSED_FOR_USER);
-    while (!lcd_clicked()) {
+    #if DISABLED(NO_LCD_FOR_FILAMENTCHANGEABLE)
+    while ( ! ( lcd_clicked() || (pin_number != -1 && digitalRead(pin_number) == target) ) ) {
+    #else
+    while (pin_number != -1 && digitalRead(pin_number) != target) {
+    #endif
       #if DISABLED(AUTO_FILAMENT_CHANGE)
         millis_t ms = millis();
         if (ELAPSED(ms, next_tick)) {
+          #if DISABLED(NO_LCD_FOR_FILAMENTCHANGEABLE)
           lcd_quick_feedback();
+          #endif
           next_tick = ms + 2500UL; // feedback every 2.5s while waiting
+          enable_x();
+          enable_y();
+          enable_z();
+
+
           #if ENABLED( DELTA_EXTRA )
             // Detected if sd is out
             if ( !card.stillPluggedIn() ) {
@@ -6681,8 +6783,29 @@ inline void gcode_M503() {
         st_synchronize();
       #endif
     } // while(!lcd_clicked)
+
+    #if ENABLED( NO_LCD_FOR_FILAMENTCHANGEABLE ) && ENABLED( FILAMENT_RUNOUT_SENSOR )
+      // Wait a bit more to see if we want to disable filrunout sensor
+      millis_t now = millis();
+      millis_t long_push = now + 1000UL;
+      delay( 200 );
+      while (pin_number != -1 && digitalRead(pin_number) == target && PENDING(now, long_push)) {
+        enable_x();
+        enable_y();
+        enable_z();
+        idle(true);
+        now = millis();
+      }
+      if ( ELAPSED(now,long_push) ) {
+        filrunout_bypassed = true;
+        SERIAL_ECHOLN( "Filament sensor bypassed" );
+      }
+    #endif
+
     KEEPALIVE_STATE(IN_HANDLER);
+    #if DISABLED(NO_LCD_FOR_FILAMENTCHANGEABLE)
     lcd_quick_feedback(); // click sound feedback
+    #endif
 
     #if ENABLED(AUTO_FILAMENT_CHANGE)
       current_position[E_AXIS] = 0;
@@ -6690,6 +6813,11 @@ inline void gcode_M503() {
     #endif
 
     //return to normal
+    if (code_seen('E')) destination[E_AXIS] -= code_value();
+    #ifdef FILAMENTCHANGE_FIRSTRETRACT
+      else destination[E_AXIS] -= FILAMENTCHANGE_FIRSTRETRACT;
+    #endif
+
     if (code_seen('L')) destination[E_AXIS] -= code_value();
     #ifdef FILAMENTCHANGE_FINALRETRACT
       else destination[E_AXIS] -= FILAMENTCHANGE_FINALRETRACT;
@@ -6700,7 +6828,9 @@ inline void gcode_M503() {
 
     RUNPLAN; //should do nothing
 
+    #if DISABLED(NO_LCD_FOR_FILAMENTCHANGEABLE)
     lcd_reset_alert_level();
+    #endif
 
     #if ENABLED(DELTA)
       // Move XYZ to starting position, then E
@@ -6717,6 +6847,8 @@ inline void gcode_M503() {
       destination[E_AXIS] = lastpos[E_AXIS];
       line_to_destination();
     #endif
+
+    st_synchronize();
 
     #if ENABLED(FILAMENT_RUNOUT_SENSOR)
       filament_ran_out = false;
