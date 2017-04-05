@@ -507,6 +507,38 @@ void CardReader::write_command(char *buf) {
   }
 }
 
+#if ENABLED( DELTA_EXTRA )
+bool CardReader::writePGM(const char *bufPGM) {
+  char msg[64];
+  strncpy_P(msg, bufPGM, sizeof(msg) - 1);
+  file.writeError = false;
+  file.write( msg );
+  file.write( '\r' );
+  file.write( '\n' );
+  return !file.writeError;
+}
+
+bool CardReader::stillPluggedIn() {
+  // Jump to end of file, to avoid SdFile 'cluster' block cache
+  // TODO: do it better
+  //       (e.g: when we will be in the last 'cluster' block as sd_curpos)
+  //       (     peek will not fail baecause already in cache)
+  if ( ! file.seekEnd( -1 ) ) {
+    return false;
+  }
+
+  if ( file.peek() < 0 ) {
+    return false;
+  }
+
+  // Jump back to where we were
+  if ( ! file.seekSet(sdpos) ) {
+    return false;
+  }
+
+  return true;
+}
+#endif
 void CardReader::checkautostart(bool force) {
   if (!force && (!autostart_stilltocheck || ELAPSED(millis(), next_autostart_ms)))
     return;

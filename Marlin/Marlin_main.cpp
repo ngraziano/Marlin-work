@@ -424,6 +424,15 @@ static uint8_t target_extruder;
     int delta_grid_spacing[2] = { 0, 0 };
     float bed_level[AUTO_BED_LEVELING_GRID_POINTS][AUTO_BED_LEVELING_GRID_POINTS];
   #endif
+
+  #if ENABLED( DELTA_EXTRA )
+    bool postcompute_tri_ready = false;
+    bool startup_auto_calibration = false;
+    float z_smooth_tri_leveling_height = 0.0;
+    #if ENABLED( SDSUPPORT )
+      inline void abort_sd_printing();
+    #endif
+  #endif
 #else
   static bool home_all_axis = true;
 #endif
@@ -854,6 +863,24 @@ void setup() {
   #ifdef STAT_LED_BLUE
     pinMode(STAT_LED_BLUE, OUTPUT);
     digitalWrite(STAT_LED_BLUE, LOW); // turn it off
+  #endif
+  #if ENABLED( DELTA_EXTRA )
+    #if ENABLED( ONE_BUTTON )
+      // Read the button state here
+      millis_t now = millis();
+      millis_t timeout = now + 2500UL;
+      do {
+         now = millis();
+         delay( 100 );
+      } while( ( READ( SUMMON_PRINT_PAUSE_PIN ) ^ SUMMON_PRINT_PAUSE_INVERTING ) && PENDING( now, timeout ) );
+      if ( ELAPSED( now, timeout ) ) {
+        startup_auto_calibration = true;
+        enqueue_and_echo_commands_P( PSTR("D851") );
+      }
+      else {
+        enqueue_and_echo_commands_P( PSTR("G28") );
+      }
+    #endif
   #endif
 }
 
@@ -3072,6 +3099,355 @@ inline void gcode_G28() {
     serialprintPGM(p_edge);
     SERIAL_PROTOCOLLNPGM(" position out of range.");
   }
+
+  #if ENABLED( DELTA_EXTRA )
+
+    #if ENABLED( TRI_SHAPE_PROBING )
+      float probe_point_XY_x = (delta_tower1_x + delta_tower2_x ) / 2.0;
+      float probe_point_XY_y = (delta_tower1_y + delta_tower2_y ) / 2.0;
+
+      float probe_point_YZ_x = (delta_tower2_x + delta_tower3_x ) / 2.0;
+      float probe_point_YZ_y = (delta_tower2_y + delta_tower3_y ) / 2.0;
+
+      float probe_point_ZX_x = (delta_tower3_x + delta_tower1_x ) / 2.0;
+      float probe_point_ZX_y = (delta_tower3_y + delta_tower1_y ) / 2.0;
+    #else
+      float probe_point_XY_x =  0.0;
+      float probe_point_XY_y =  -1.0 * delta_radius;
+
+      float probe_point_YZ_x =  SIN_60 * delta_radius;
+      float probe_point_YZ_y =  COS_60 * delta_radius;
+
+      float probe_point_ZX_x = -SIN_60 * delta_radius;
+      float probe_point_ZX_y =  COS_60 * delta_radius;
+    #endif
+
+    // Predefine used functions
+    inline void gcode_M500();
+    inline void gcode_M665();
+    inline void gcode_G30();
+
+    inline float get_probed_Z_avg() {
+
+      bool all_points_are_good = false;
+      float z_read[3] = { 50.0 };
+      float z_avg = 0.0;
+
+      do {
+        gcode_G30();
+
+        z_read[2] = z_read[1];
+        z_read[1] = z_read[0];
+        z_read[0] = current_position[Z_AXIS];
+
+        z_avg = ( z_read[0] + z_read[1] + z_read[2] ) / 3.0;
+
+        set_destination_to_current();
+        destination[ Z_AXIS ] = min( 50.0, destination[ Z_AXIS ] + 5.0 );
+        prepare_move();
+        st_synchronize();
+
+        if ( destination[ Z_AXIS ] > 49.90 ) {
+          int i=10; do { idle(true); delay(100); } while(--i);
+          all_points_are_good = false;
+        }
+        else {
+          // Check for all points
+          all_points_are_good =
+            abs(z_read[0] - z_avg) < 0.05 &&
+            abs(z_read[1] - z_avg) < 0.05 &&
+            abs(z_read[2] - z_avg) < 0.05;
+        }
+
+      } while( !all_points_are_good );
+
+
+      return z_avg;
+    }
+
+    /**
+     *           T3
+     *           |
+     *           |
+     *          4| 3
+     *           |
+     *      ZX   O    YZ
+     *        5      2
+     *
+     *         0    1
+     *
+     *  T1       XY        T2
+     */
+
+    // TODO: Move it to the right place
+    // WHERE: on calculate_delta parameters ?
+    // 'CAUSE: these values are fixed against delta R
+    float precalc_probed_tri_aref[4] = { 0.0, 0.0, 0.0, 0.0 };
+
+    inline int triangle_index( const float x, const float y ) {
+
+      // While all tri equations are just: y = a.x;
+      float aTested = y / x;
+
+      // Test to choice between 2 tri groups: 1,2,3 or 0,4,5
+      if ( x >= 0.0 ) {
+        // Index is one of 1, 2 or 3
+
+        // Test for tri idx 1 or 2,3
+        // aRef = delta_tower2_y / delta_tower2_x;
+        if ( aTested > precalc_probed_tri_aref[ 0 ] ) {
+          // Idx is one of 2 or 3
+          // Test for tri 2 or 3
+          // aRef = probe_point_YZ_y / probe_point_YZ_x;
+          if ( aTested > precalc_probed_tri_aref[ 1 ] ) {
+            return 3;
+          }
+          else {
+            return 2;
+          }
+        }
+        else {
+          return 1;
+        }
+      }
+      else {
+        // Index is one of 0, 4 or 5
+        // Test for tri idx 0 or 4,5
+        // aRef = delta_tower1_y / delta_tower1_x;
+        if ( aTested > precalc_probed_tri_aref[ 2 ] ) {
+          return 0;
+        }
+        else {
+          // Index is one of 4 or 5
+          // Test for tri 4 or 5
+          // aRef = probe_point_ZX_y / probe_point_ZX_x;
+          if ( aTested > precalc_probed_tri_aref[ 3 ] ) {
+            return 5;
+          }
+          else {
+            return 4;
+          }
+        }
+      }
+
+      // It's an error
+      return -1;
+    }
+
+    float probed_tri_altitude[7] = { 42.0, 42.0, 42.0, 42.0, 42.0, 42.0, 42.0 };
+
+    float probed_tri_postcompute_d[6] = { 0.0 };
+    float probed_tri_postcompute_nx[6] = { 0.0 };
+    float probed_tri_postcompute_ny[6] = { 0.0 };
+    float probed_tri_postcompute_nz[6] = { 0.0 };
+
+    inline void probing_postcompute_tri_parameters() {
+
+      float ax[6] = {
+         delta_tower1_x
+        ,probe_point_XY_x
+        ,delta_tower2_x
+        ,probe_point_YZ_x
+        ,delta_tower3_x
+        ,probe_point_ZX_x
+      };
+      float ay[6] = {
+         delta_tower1_y
+        ,probe_point_XY_y
+        ,delta_tower2_y
+        ,probe_point_YZ_y
+        ,delta_tower3_y
+        ,probe_point_ZX_y
+      };
+      float az[6] = {
+         probed_tri_altitude[0]
+        ,probed_tri_altitude[1]
+        ,probed_tri_altitude[2]
+        ,probed_tri_altitude[3]
+        ,probed_tri_altitude[4]
+        ,probed_tri_altitude[5]
+      };
+
+      float bx[6] = {
+         probe_point_XY_x
+        ,delta_tower2_x
+        ,probe_point_YZ_x
+        ,delta_tower3_x
+        ,probe_point_ZX_x
+        ,delta_tower1_x
+      };
+      float by[6] = {
+         probe_point_XY_y
+        ,delta_tower2_y
+        ,probe_point_YZ_y
+        ,delta_tower3_y
+        ,probe_point_ZX_y
+        ,delta_tower1_y
+      };
+      float bz[6] = {
+         probed_tri_altitude[1]
+        ,probed_tri_altitude[2]
+        ,probed_tri_altitude[3]
+        ,probed_tri_altitude[4]
+        ,probed_tri_altitude[5]
+        ,probed_tri_altitude[0]
+      };
+
+      float cz = probed_tri_altitude[6];
+
+      for( int i=0; i<6; i++ ) {
+
+        float cax, cay, caz, cbx, cby, cbz;
+        // x:a.x, y:a.y, z:a.z - c.z
+        cax = ax[i];
+        cay = ay[i];
+        caz = az[i] - cz;
+        // x:b.x, y:b.y, z:b.z - c.z
+        cbx = bx[i];
+        cby = by[i];
+        cbz = bz[i] - cz;
+
+        // n.x: ca.y * cb.z - ca.z * cb.y
+        probed_tri_postcompute_nx[i] = cay * cbz - caz * cby;
+        // n.y: ca.z * cb.x - ca.x * cb.z
+        probed_tri_postcompute_ny[i] = caz * cbx - cax * cbz;
+        // n.z: ca.x * cb.y - ca.y * cb.x
+        probed_tri_postcompute_nz[i] = cax * cby - cay * cbx;
+        // d: - n.z * c.z;
+        probed_tri_postcompute_d[i] = - probed_tri_postcompute_nz[i] * cz;
+      }
+
+      postcompute_tri_ready = true;
+    }
+
+    inline void gcode_G29() {
+
+      postcompute_tri_ready = false;
+
+      gcode_G28();
+
+      feedrate = homing_feedrate[ X_AXIS ];
+
+      // Reset
+      probed_tri_altitude[0] =
+      probed_tri_altitude[1] =
+      probed_tri_altitude[2] =
+      probed_tri_altitude[3] =
+      probed_tri_altitude[4] =
+      probed_tri_altitude[5] =
+      probed_tri_altitude[6] = 42.0;
+
+      destination[ X_AXIS ] = delta_tower1_x;
+      destination[ Y_AXIS ] = delta_tower1_y;
+      destination[ Z_AXIS ] = 10.0;
+      prepare_move();
+      st_synchronize();
+      probed_tri_altitude[0] = get_probed_Z_avg();
+
+      destination[ X_AXIS ] = probe_point_XY_x;
+      destination[ Y_AXIS ] = probe_point_XY_y;
+      destination[ Z_AXIS ] = 10.0;
+      prepare_move();
+      st_synchronize();
+      probed_tri_altitude[1] = get_probed_Z_avg();
+
+      destination[ X_AXIS ] = delta_tower2_x;
+      destination[ Y_AXIS ] = delta_tower2_y;
+      destination[ Z_AXIS ] = 10.0;
+      prepare_move();
+      st_synchronize();
+      probed_tri_altitude[2] = get_probed_Z_avg();
+
+      destination[ X_AXIS ] = probe_point_YZ_x;
+      destination[ Y_AXIS ] = probe_point_YZ_y;
+      destination[ Z_AXIS ] = 10.0;
+      prepare_move();
+      st_synchronize();
+      probed_tri_altitude[3] = get_probed_Z_avg();
+
+      destination[ X_AXIS ] = delta_tower3_x;
+      destination[ Y_AXIS ] = delta_tower3_y;
+      destination[ Z_AXIS ] = 10.0;
+      prepare_move();
+      st_synchronize();
+      probed_tri_altitude[4] = get_probed_Z_avg();
+
+      destination[ X_AXIS ] = probe_point_ZX_x;
+      destination[ Y_AXIS ] = probe_point_ZX_y;
+      destination[ Z_AXIS ] = 10.0;
+      prepare_move();
+      st_synchronize();
+      probed_tri_altitude[5] = get_probed_Z_avg();
+
+      destination[ X_AXIS ] = 0.0;
+      destination[ Y_AXIS ] = 0.0;
+      destination[ Z_AXIS ] = 10.0;
+      prepare_move();
+      st_synchronize();
+      probed_tri_altitude[6] = get_probed_Z_avg();
+
+      SERIAL_ECHOLN( "Probed tri altitude:" );
+      for(int i=0; i<7; i++) {
+        SERIAL_ECHO( "                [" );
+        SERIAL_ECHO( i );
+        SERIAL_ECHO("]: ");
+        SERIAL_ECHOLN( probed_tri_altitude[i] );
+      }
+
+      z_smooth_tri_leveling_height =
+        max(probed_tri_altitude[0],
+        max(probed_tri_altitude[1],
+        max(probed_tri_altitude[2],
+        max(probed_tri_altitude[3],
+        max(probed_tri_altitude[4],
+        max(probed_tri_altitude[5],
+            probed_tri_altitude[7])))))) -
+        min(probed_tri_altitude[0],
+        min(probed_tri_altitude[1],
+        min(probed_tri_altitude[2],
+        min(probed_tri_altitude[3],
+        min(probed_tri_altitude[4],
+        min(probed_tri_altitude[5],
+            probed_tri_altitude[7]))))));
+
+      SERIAL_ECHO( "       smooth range: " );
+      SERIAL_ECHOLN( z_smooth_tri_leveling_height );
+
+      z_smooth_tri_leveling_height = 20.0;
+
+      SERIAL_ECHO( "     overrided with: " );
+      SERIAL_ECHOLN( z_smooth_tri_leveling_height );
+
+      precalc_probed_tri_aref[ 0 ] = delta_tower2_y / delta_tower2_x;
+      precalc_probed_tri_aref[ 1 ] = probe_point_YZ_y / probe_point_YZ_x;
+      precalc_probed_tri_aref[ 2 ] = delta_tower1_y / delta_tower1_x;
+      precalc_probed_tri_aref[ 3 ] = probe_point_ZX_y / probe_point_ZX_x;
+
+      //#define TEST_SPECIAL_PROBE
+
+      #ifdef TEST_SPECIAL_PROBE
+
+        for( float y=-100.0; y < 100.0; y+= 10.0 ) {
+          for( float x=-100.0; x < 100.0; x+= 10.0 ) {
+            SERIAL_ECHO( "  @X:" );
+            SERIAL_ECHO( x );
+            SERIAL_ECHO( " Y:" );
+            SERIAL_ECHO( y );
+            SERIAL_ECHO( "  triangle_index:" );
+            SERIAL_ECHOLN( triangle_index( x, y ) );
+          }
+        }
+
+      #endif
+
+
+      probing_postcompute_tri_parameters();
+
+      //gcode_G28();
+
+    }
+
+  #else // ELSE: DELTA_EXTRA
 
   /**
    * G29: Detailed Z probe, probes the bed at 3 or more points.
@@ -6426,6 +6802,508 @@ inline void gcode_T(uint8_t tmp_extruder) {
   }
 }
 
+#if ENABLED( DELTA_EXTRA )
+
+inline void abort_sd_printing() {
+  commands_in_queue = 0;
+  quickStop();
+  card.sdprinting = false;
+  card.closefile();
+  autotempShutdown();
+  setTargetHotend(0, 0);
+  cancel_heatup = true;
+}
+
+inline void gcode_D410() {
+  abort_sd_printing();
+}
+
+inline void gcode_D888() {
+  SERIAL_ECHOLN( "Bizarre procedure" );
+  float z_bizarre = 0.5;
+  if (code_seen('Z')) {
+    z_bizarre = code_value();
+  }
+  float f_bizarre = 3000;
+  if (code_seen('F')) {
+    f_bizarre = code_value();
+  }
+
+  float x_bizarre = 70;
+  if (code_seen('X')) {
+    x_bizarre = code_value();
+  }
+
+  int N = 100;
+  if (code_seen('N')) {
+    N = code_value();
+  }
+
+  for(int i=0; i<N; i++) {
+    feedrate = f_bizarre;
+    destination[X_AXIS] = x_bizarre;
+    destination[Y_AXIS] = 0;
+    destination[Z_AXIS] = z_bizarre;
+    prepare_move();
+    st_synchronize();
+
+    destination[X_AXIS] = x_bizarre + 10.0;
+
+    prepare_move();
+    st_synchronize();
+  }
+}
+
+inline void gcode_D999() {
+  SERIAL_ECHOLN( "Reseting board" );
+  while( true ) {
+    delay(1000);
+  }
+}
+
+inline void gcode_D851() {
+
+  SERIAL_ECHOLN( "Starting full Delta calibration" );
+
+  postcompute_tri_ready = false; // Disable tri-delta correction
+
+  gcode_M502(); // Restore factory settings
+  gcode_M665(); // Re-Calc Delta settings
+  gcode_M500(); // Save settings
+
+  gcode_G28();
+
+  #define THAT_FULL_AND_R
+
+#ifdef THAT_FULL_AND_R
+
+  feedrate = homing_feedrate[ Z_AXIS ];
+
+  float tower1_altitude, tower2_altitude, tower3_altitude, center_altitude;
+
+  // TOWER 1
+  destination[X_AXIS] = delta_tower1_x;
+  destination[Y_AXIS] = delta_tower1_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower1_altitude = get_probed_Z_avg();
+
+  // TOWER 2
+  destination[X_AXIS] = delta_tower2_x;
+  destination[Y_AXIS] = delta_tower2_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower2_altitude = get_probed_Z_avg();
+
+  // TOWER 3
+  destination[X_AXIS] = delta_tower3_x;
+  destination[Y_AXIS] = delta_tower3_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower3_altitude = get_probed_Z_avg();
+
+  // CENTER
+  destination[X_AXIS] = 0.0f;
+  destination[Y_AXIS] = 0.0f;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  center_altitude = get_probed_Z_avg();
+
+  SERIAL_ECHOLN( "R probed points:" );
+  SERIAL_ECHO  ( "  T1: " );
+  SERIAL_ECHOLN( tower1_altitude );
+  SERIAL_ECHO  ( "  T2: " );
+  SERIAL_ECHOLN( tower2_altitude );
+  SERIAL_ECHO  ( "  T3: " );
+  SERIAL_ECHOLN( tower3_altitude );
+  SERIAL_ECHO  ( "   C: " );
+  SERIAL_ECHOLN( center_altitude );
+
+  float mean_ref_plan_altitude = ( tower1_altitude + tower2_altitude + tower3_altitude ) / 3.0;
+  float diff_center_altitude = center_altitude - mean_ref_plan_altitude;
+
+  SERIAL_ECHO( "Mean based difference: " );
+  SERIAL_ECHOLN( diff_center_altitude );
+
+  do {
+
+    delta_radius -= 2.0 * diff_center_altitude;
+
+    gcode_M665();
+
+    destination[X_AXIS] = delta_tower1_x;
+    destination[Y_AXIS] = delta_tower1_y;
+    destination[Z_AXIS] = 10.0f;
+    prepare_move();
+    st_synchronize();
+    tower1_altitude = get_probed_Z_avg();
+
+    // TOWER 2
+    destination[X_AXIS] = delta_tower2_x;
+    destination[Y_AXIS] = delta_tower2_y;
+    destination[Z_AXIS] = 10.0f;
+    prepare_move();
+    st_synchronize();
+    tower2_altitude = get_probed_Z_avg();
+
+    // TOWER 3
+    destination[X_AXIS] = delta_tower3_x;
+    destination[Y_AXIS] = delta_tower3_y;
+    destination[Z_AXIS] = 10.0f;
+    prepare_move();
+    st_synchronize();
+    tower3_altitude = get_probed_Z_avg();
+
+    // CENTER
+    destination[X_AXIS] = 0.0f;
+    destination[Y_AXIS] = 0.0f;
+    destination[Z_AXIS] = 10.0f;
+    prepare_move();
+    st_synchronize();
+    center_altitude = get_probed_Z_avg();
+
+    SERIAL_ECHOLN( "R probed points:" );
+    SERIAL_ECHO  ( "  T1: " );
+    SERIAL_ECHOLN( tower1_altitude );
+    SERIAL_ECHO  ( "  T2: " );
+    SERIAL_ECHOLN( tower2_altitude );
+    SERIAL_ECHO  ( "  T3: " );
+    SERIAL_ECHOLN( tower3_altitude );
+    SERIAL_ECHO  ( "   C: " );
+    SERIAL_ECHOLN( center_altitude );
+
+    mean_ref_plan_altitude = ( tower1_altitude + tower2_altitude + tower3_altitude ) / 3.0;
+    diff_center_altitude = center_altitude - mean_ref_plan_altitude;
+
+    SERIAL_ECHO( "NEW Mean based difference: " );
+    SERIAL_ECHOLN( diff_center_altitude );
+  } while( abs( diff_center_altitude ) > 0.05 );
+
+  // Use last result as endstops adujst
+  endstop_adj[0] = tower1_altitude /*+ zprobe_zoffset*/;
+  endstop_adj[1] = tower2_altitude /*+ zprobe_zoffset*/;
+  endstop_adj[2] = tower3_altitude /*+ zprobe_zoffset*/;
+
+  // Store endstop adjust
+  gcode_M500();
+
+  // JUST FOR REPORTING BACK
+  // Take in account now
+  gcode_G28();
+
+  // TOWER 1
+  destination[X_AXIS] = delta_tower1_x;
+  destination[Y_AXIS] = delta_tower1_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower1_altitude = get_probed_Z_avg();
+
+  // TOWER 2
+  destination[X_AXIS] = delta_tower2_x;
+  destination[Y_AXIS] = delta_tower2_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower2_altitude = get_probed_Z_avg();
+
+  // TOWER 3
+  destination[X_AXIS] = delta_tower3_x;
+  destination[Y_AXIS] = delta_tower3_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower3_altitude = get_probed_Z_avg();
+
+  // CENTER
+  destination[X_AXIS] = 0.0f;
+  destination[Y_AXIS] = 0.0f;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  center_altitude = get_probed_Z_avg();
+
+  SERIAL_ECHOLN( "R probed points:" );
+  SERIAL_ECHO  ( "  T1: " );
+  SERIAL_ECHOLN( tower1_altitude );
+  SERIAL_ECHO  ( "  T2: " );
+  SERIAL_ECHOLN( tower2_altitude );
+  SERIAL_ECHO  ( "  T3: " );
+  SERIAL_ECHOLN( tower3_altitude );
+  SERIAL_ECHO  ( "   C: " );
+  SERIAL_ECHOLN( center_altitude );
+
+  mean_ref_plan_altitude = ( tower1_altitude + tower2_altitude + tower3_altitude ) / 3.0;
+  diff_center_altitude = center_altitude - mean_ref_plan_altitude;
+
+  SERIAL_ECHO( "FOR VERIF ONLY Mean based difference: " );
+  SERIAL_ECHOLN( diff_center_altitude );
+
+#elif defined THAT_SIMPLE
+
+  feedrate = homing_feedrate[ Z_AXIS ];
+
+  float tower1_altitude, tower2_altitude, tower3_altitude, center_altitude;
+
+  // TOWER 1
+  destination[X_AXIS] = delta_tower1_x;
+  destination[Y_AXIS] = delta_tower1_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower1_altitude = get_probed_Z_avg();
+
+  // TOWER 2
+  destination[X_AXIS] = delta_tower2_x;
+  destination[Y_AXIS] = delta_tower2_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower2_altitude = get_probed_Z_avg();
+
+  // TOWER 3
+  destination[X_AXIS] = delta_tower3_x;
+  destination[Y_AXIS] = delta_tower3_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+  tower3_altitude = get_probed_Z_avg();
+
+  SERIAL_ECHOLN( "R probed points:" );
+  SERIAL_ECHO  ( "  T1: " );
+  SERIAL_ECHOLN( tower1_altitude );
+  SERIAL_ECHO  ( "  T2: " );
+  SERIAL_ECHOLN( tower2_altitude );
+  SERIAL_ECHO  ( "  T3: " );
+  SERIAL_ECHOLN( tower3_altitude );
+
+  // Use last result as endstops adujst
+  endstop_adj[0] = tower1_altitude + zprobe_zoffset;
+  endstop_adj[1] = tower2_altitude + zprobe_zoffset;
+  endstop_adj[2] = tower3_altitude + zprobe_zoffset;
+
+  // Store endstop adjust
+  gcode_M500();
+
+#else
+
+  feedrate = 8000;
+
+  float tower1_altitude, tower2_altitude, tower3_altitude, center_altitude;
+
+  // TOWER 1
+  destination[X_AXIS] = delta_tower1_x;
+  destination[Y_AXIS] = delta_tower1_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  int da_pause;
+  da_pause = 10; do { idle(); delay(100); } while(--da_pause);
+
+  tower1_altitude = get_probed_Z_avg();
+
+  // TOWER 2
+  destination[X_AXIS] = delta_tower2_x;
+  destination[Y_AXIS] = delta_tower2_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 10; do { idle(); delay(100); } while(--da_pause);
+
+  tower2_altitude = get_probed_Z_avg();
+
+  // TOWER 3
+  destination[X_AXIS] = delta_tower3_x;
+  destination[Y_AXIS] = delta_tower3_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 10; do { idle(); delay(100); } while(--da_pause);
+
+  tower3_altitude = get_probed_Z_avg();;
+
+  SERIAL_ECHOLN( "endstop_adj probed points:" );
+  SERIAL_ECHO  ( "  T1: " );
+  SERIAL_ECHOLN( tower1_altitude );
+  SERIAL_ECHO  ( "  T2: " );
+  SERIAL_ECHOLN( tower2_altitude );
+  SERIAL_ECHO  ( "  T3: " );
+  SERIAL_ECHOLN( tower3_altitude );
+
+  endstop_adj[0] = tower1_altitude + zprobe_zoffset;
+  endstop_adj[1] = tower2_altitude + zprobe_zoffset;
+  endstop_adj[2] = tower3_altitude + zprobe_zoffset;
+
+  // Store endstop adjust
+  gcode_M500();
+
+  // Take in account now
+  gcode_G28();;
+
+  //
+  // NOW
+  // Reprobe each tower PLUS middle point
+  feedrate = homing_feedrate[ X_AXIS ];
+
+  // TOWER 1
+  destination[X_AXIS] = delta_tower1_x;
+  destination[Y_AXIS] = delta_tower1_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  tower1_altitude = get_probed_Z_avg();
+
+
+  // TOWER 2
+  destination[X_AXIS] = delta_tower2_x;
+  destination[Y_AXIS] = delta_tower2_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  tower2_altitude = get_probed_Z_avg();
+
+
+  // TOWER 3
+  destination[X_AXIS] = delta_tower3_x;
+  destination[Y_AXIS] = delta_tower3_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  tower3_altitude = get_probed_Z_avg();
+
+
+  // CENTER
+  destination[X_AXIS] = 0.0f;
+  destination[Y_AXIS] = 0.0f;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  center_altitude = get_probed_Z_avg();
+
+  SERIAL_ECHOLN( "R probed points:" );
+  SERIAL_ECHO  ( "  T1: " );
+  SERIAL_ECHOLN( tower1_altitude );
+  SERIAL_ECHO  ( "  T2: " );
+  SERIAL_ECHOLN( tower2_altitude );
+  SERIAL_ECHO  ( "  T3: " );
+  SERIAL_ECHOLN( tower3_altitude );
+  SERIAL_ECHO  ( "   C: " );
+  SERIAL_ECHOLN( center_altitude );
+
+  float mean_ref_plan_altitude = ( tower1_altitude + tower2_altitude + tower3_altitude ) / 3.0;
+  float diff_center_altitude = center_altitude - mean_ref_plan_altitude;
+
+  SERIAL_ECHO( "Mean based difference: " );
+  SERIAL_ECHOLN( diff_center_altitude );
+
+  if ( diff_center_altitude < 0.0 )
+    delta_radius += sqrt(abs(diff_center_altitude));
+  else
+    delta_radius -= sqrt(diff_center_altitude);
+
+  gcode_M665();
+
+  gcode_M500();
+
+  // Take in account now
+  gcode_G28();;
+
+  //
+  // NOW
+  // Reprobe each tower PLUS middle point
+  feedrate = homing_feedrate[ X_AXIS ];
+
+  // TOWER 1
+  destination[X_AXIS] = delta_tower1_x;
+  destination[Y_AXIS] = delta_tower1_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  tower1_altitude = get_probed_Z_avg();
+
+
+  // TOWER 2
+  destination[X_AXIS] = delta_tower2_x;
+  destination[Y_AXIS] = delta_tower2_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  tower2_altitude = get_probed_Z_avg();
+
+
+  // TOWER 3
+  destination[X_AXIS] = delta_tower3_x;
+  destination[Y_AXIS] = delta_tower3_y;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  tower3_altitude = get_probed_Z_avg();
+
+
+  // CENTER
+  destination[X_AXIS] = 0.0f;
+  destination[Y_AXIS] = 0.0f;
+  destination[Z_AXIS] = 10.0f;
+  prepare_move();
+  st_synchronize();
+
+  da_pause = 5; do { idle(); delay(100); } while(--da_pause);
+
+  center_altitude = get_probed_Z_avg();
+
+  SERIAL_ECHOLN( "NEW R probed points:" );
+  SERIAL_ECHO  ( "  T1: " );
+  SERIAL_ECHOLN( tower1_altitude );
+  SERIAL_ECHO  ( "  T2: " );
+  SERIAL_ECHOLN( tower2_altitude );
+  SERIAL_ECHO  ( "  T3: " );
+  SERIAL_ECHOLN( tower3_altitude );
+  SERIAL_ECHO  ( "   C: " );
+  SERIAL_ECHOLN( center_altitude );
+
+  mean_ref_plan_altitude = ( tower1_altitude + tower2_altitude + tower3_altitude ) / 3.0;
+  diff_center_altitude = center_altitude - mean_ref_plan_altitude;
+
+  SERIAL_ECHO( "NEW Mean based difference: " );
+  SERIAL_ECHOLN( diff_center_altitude );
+
+#endif
+
+  gcode_G28();
+
+  startup_auto_calibration = false;
+}
+
+#endif // DELTA_EXTRA End
+
 /**
  * Process a single command and dispatch it to its handler
  * This is called from the main loop()
@@ -7923,6 +8801,34 @@ void kill(const char* lcd_msg) {
     lcd_setalertstatuspgm(lcd_msg);
   #else
     UNUSED(lcd_msg);
+  #endif
+
+  #if ENABLED( DELTA_EXTRA )
+    #if ENABLED( SDSUPPORT )
+      // Dump error msg onto sd card
+      abort_sd_printing();
+      card.initsd();
+      if ( card.cardOK ) {
+        card.openLogFile( "errmsg.d" );
+        if ( card.saving ) {
+          if ( card.writePGM( lcd_msg ) ) {
+            SERIAL_ECHOLN( PSTR("errmsg.d : file written, for more information.") );
+          }
+          else {
+            SERIAL_ECHOLN( PSTR("errmsg.d : can't write file content") );
+          }
+          card.closefile();
+          card.release();
+        }
+        else {
+          SERIAL_ECHOLN( PSTR("errmsg.d : can't create file") );
+        }
+      }
+      else {
+        SERIAL_ECHOLN( PSTR("errmsg.d : can't init sd card") );
+      }
+    #endif
+    gcode_G28();
   #endif
 
   cli(); // Stop interrupts
