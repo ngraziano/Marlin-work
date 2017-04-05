@@ -8326,6 +8326,8 @@ void process_next_command() {
       gcode_T(codenum);
       break;
 
+    case 'D': switch (codenum) {
+      // DAGOMA.FR Specific
       #if ENABLED(WIFI_PRINT)
         case 700:
           gcode_D700(); // SSID
@@ -8363,6 +8365,9 @@ void process_next_command() {
           gcode_D999();
           break;
       #endif
+      // DAGOMA.FR End
+      }
+    break;
     default: code_is_good = false;
   }
 
