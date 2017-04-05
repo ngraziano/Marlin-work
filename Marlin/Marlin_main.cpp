@@ -330,6 +330,10 @@ millis_t previous_cmd_ms = 0;
 static millis_t max_inactive_time = 0;
 static millis_t stepper_inactive_time = (DEFAULT_STEPPER_DEACTIVE_TIME) * 1000UL;
 
+#if ENABLED(IS_MONO_FAN) || ENABLED(PRINTER_HEAD_EASY)
+static millis_t next_fan_auto_regulation_check = 0;
+#endif
+
 // Print Job Timer
 Stopwatch print_job_timer = Stopwatch();
 
@@ -932,6 +936,12 @@ void setup() {
     SET_INPUT(ONE_BUTTON_PIN);
     WRITE(ONE_BUTTON_PIN, HIGH);
   #endif
+
+  #if ENABLED(PRINTER_HEAD_EASY)
+    SET_OUTPUT(PRINTER_HEAD_EASY_CONSTANT_FAN_PIN);
+    WRITE(PRINTER_HEAD_EASY_CONSTANT_FAN_PIN, LOW);
+  #endif
+
   #if ENABLED( DELTA_EXTRA )
     #if ENABLED( ONE_BUTTON )
       // Read the button state here
@@ -9402,6 +9412,38 @@ void manage_inactivity(bool ignore_stepper_queue/*=false*/) {
         homeDebounceCount++;
       else
         homeDebounceCount = 0;
+    }
+  #endif
+
+  #if ENABLED(IS_MONO_FAN) || ENABLED(PRINTER_HEAD_EASY)
+    if ( ELAPSED(ms, next_fan_auto_regulation_check) ) {
+      float max_temp = 0.0;
+      for (int8_t cur_extruder = 0; cur_extruder < EXTRUDERS; ++cur_extruder)
+        max_temp = max(max_temp, degHotend(cur_extruder));
+
+      #if ENABLED(IS_MONO_FAN)
+        short fs = 0;
+        if ( max_temp < MONO_FAN_MIN_TEMP ) {
+          fs = 0;
+        }
+        else {
+          fs = fanSpeeds[0];
+          NOLESS(fs, MONO_FAN_MIN_PWM);
+        }
+
+        fanSpeeds[0] = fs;
+      #endif
+
+      #if ENABLED(PRINTER_HEAD_EASY)
+        if ( max_temp < PRINTER_HEAD_EASY_CONSTANT_FAN_MIN_TEMP ) {
+          analogWrite(PRINTER_HEAD_EASY_CONSTANT_FAN_PIN, 0);
+        }
+        else {
+          analogWrite(PRINTER_HEAD_EASY_CONSTANT_FAN_PIN, 255);
+        }
+      #endif
+
+      next_fan_auto_regulation_check = ms + 2500UL;
     }
   #endif
 
