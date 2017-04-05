@@ -129,6 +129,7 @@
 #define MSG_REFRESH                         "Actualiser"
 #define MSG_WATCH                           "Surveiller"
 #define MSG_PREPARE                         "Preparer"
+#define MSG_PREPARE_ADVENCED                "Options avancees"
 #define MSG_TUNE                            "Regler"
 #define MSG_PAUSE_PRINT                     "Interrompre impr."
 #define MSG_RESUME_PRINT                    "Reprendre impr."
