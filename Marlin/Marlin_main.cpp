@@ -930,6 +930,56 @@ void setup() {
 
 }
 
+#if ENABLED(WIFI_PRINT)
+  unsigned long last_status_timestamp = 0;
+  void manage_second_serial_status() {
+    if ( millis() - last_status_timestamp > 10000 ) {
+      SECOND_SERIAL.print( "STAT:" );
+
+      SECOND_SERIAL.print( "tstp:" );
+      SECOND_SERIAL.print(  millis()  );
+
+      SECOND_SERIAL.print( " X:" );
+      SECOND_SERIAL.print( current_position[X_AXIS] );
+      SECOND_SERIAL.print( " Y:" );
+      SECOND_SERIAL.print( current_position[Y_AXIS] );
+      SECOND_SERIAL.print( " Z:" );
+      SECOND_SERIAL.print( current_position[Z_AXIS] );
+      SECOND_SERIAL.print( " E:" );
+      SECOND_SERIAL.print( current_position[E_AXIS] );
+
+      #if HAS_TEMP_HOTEND
+        SECOND_SERIAL.print( " TC:" );
+        SECOND_SERIAL.print( degHotend(target_extruder), 1 );
+        SECOND_SERIAL.print( " TT:" );
+        SECOND_SERIAL.print( degTargetHotend(target_extruder), 1 );
+      #endif
+      #if HAS_TEMP_BED
+        SECOND_SERIAL.print( " BC:" );
+        SECOND_SERIAL.print( degBed(), 1 );
+        SECOND_SERIAL.print( " BT:" );
+        SECOND_SERIAL.print( degTargetBed(), 1 );
+      #endif
+
+      #if ENABLED(SDSUPPORT)
+        SECOND_SERIAL.print( " SD_OK:" );
+        SECOND_SERIAL.print( card.cardOK );
+
+        SECOND_SERIAL.print( " SD_PRINTING:" );
+        SECOND_SERIAL.print( card.sdprinting );
+
+        SECOND_SERIAL.print( " SD_PROGRESS:" );
+        SECOND_SERIAL.print( card.percentDone() );
+      #endif
+
+      SECOND_SERIAL.println();
+
+      last_status_timestamp = millis();
+    }
+  }
+
+#endif // END WIFI_PRINT
+
 /**
  * The main Marlin program loop
  *
@@ -941,6 +991,11 @@ void setup() {
  *  - Call LCD update
  */
 void loop() {
+
+  #if ENABLED( WIFI_PRINT )
+    manage_second_serial_status();
+  #endif
+
   if (commands_in_queue < BUFSIZE) get_available_commands();
 
   #if ENABLED(SDSUPPORT) && DISABLED(ONE_BUTTON)
@@ -1011,9 +1066,25 @@ inline void get_serial_commands() {
   /**
    * Loop while serial characters are incoming and the queue is not full
    */
+  #if ENABLED( WIFI_PRINT )
+
+    while (commands_in_queue < BUFSIZE && (MYSERIAL.available() > 0 || SECOND_SERIAL.available() > 0 )) {
+
+    char serial_char;
+    if ( SECOND_SERIAL.available() > 0 ) {
+      serial_char = SECOND_SERIAL.read();
+    }
+    else {
+      serial_char = MYSERIAL.read();
+    }
+
+  #else // ELSE WIFI_PRINT
+
   while (commands_in_queue < BUFSIZE && MYSERIAL.available() > 0) {
 
     char serial_char = MYSERIAL.read();
+
+  #endif // END WIFI_PRINT
 
     /**
      * If the character ends the line
@@ -1033,6 +1104,14 @@ inline void get_serial_commands() {
       char* npos = (*command == 'N') ? command : NULL; // Require the N parameter to start the line
       char* apos = strchr(command, '*');
 
+      #if ENABLED( WIFI_PRINT )
+        if ( strncmp( command, "REDY:", 4 ) == 0 ) {
+          // Do stuff with that ?
+          lcd_setstatus( command + 5 );
+          continue;
+        }
+      #endif // END WIFI_PRINT
+
       if (npos) {
 
         boolean M110 = strstr_P(command, PSTR("M110")) != NULL;
@@ -1046,6 +1125,11 @@ inline void get_serial_commands() {
 
         if (gcode_N != gcode_LastN + 1 && !M110) {
           gcode_line_error(PSTR(MSG_ERR_LINE_NO));
+
+          #if ENABLED( WIFI_PRINT )
+            SECOND_SERIAL.println( 'K' );
+          #endif
+
           return;
         }
 
@@ -1055,12 +1139,22 @@ inline void get_serial_commands() {
 
           if (strtol(apos + 1, NULL, 10) != checksum) {
             gcode_line_error(PSTR(MSG_ERR_CHECKSUM_MISMATCH));
+
+            #if ENABLED( WIFI_PRINT )
+              SECOND_SERIAL.println( 'K' );
+            #endif
+
             return;
           }
           // if no errors, continue parsing
         }
         else {
           gcode_line_error(PSTR(MSG_ERR_NO_CHECKSUM));
+
+          #if ENABLED( WIFI_PRINT )
+            SECOND_SERIAL.println( 'K' );
+          #endif
+
           return;
         }
 
@@ -1069,6 +1163,11 @@ inline void get_serial_commands() {
       }
       else if (apos) { // No '*' without 'N'
         gcode_line_error(PSTR(MSG_ERR_NO_LINENUMBER_WITH_CHECKSUM), false);
+
+        #if ENABLED( WIFI_PRINT )
+          SECOND_SERIAL.println( 'K' );
+        #endif
+
         return;
       }
 
@@ -1098,15 +1197,30 @@ inline void get_serial_commands() {
 
       // Add the command to the queue
       _enqueuecommand(serial_line_buffer, true);
+
+      #if ENABLED( WIFI_PRINT )
+        SECOND_SERIAL.println( 'O' );
+      #endif
     }
     else if (serial_count >= MAX_CMD_SIZE - 1) {
       // Keep fetching, but ignore normal characters beyond the max length
       // The command will be injected when EOL is reached
     }
     else if (serial_char == '\\') {  // Handle escapes
+      #if ENABLED(WIFI_PRINT)
+      if (MYSERIAL.available() > 0 || SECOND_SERIAL.available() > 0) {
+        // if we have one more character, copy it over
+        if (SECOND_SERIAL.available() > 0) {
+          serial_char = SECOND_SERIAL.read();
+        }
+        else {
+          serial_char = MYSERIAL.read();
+        }
+      #else
       if (MYSERIAL.available() > 0) {
         // if we have one more character, copy it over
         serial_char = MYSERIAL.read();
+      #endif
         if (!serial_comment_mode) serial_line_buffer[serial_count++] = serial_char;
       }
       // otherwise do nothing
@@ -1144,7 +1258,12 @@ inline void get_serial_commands() {
       card_eof = card.eof();
       if (card_eof || n == -1
           || sd_char == '\n' || sd_char == '\r'
-          || ((sd_char == '#' || sd_char == ':') && !sd_comment_mode)
+          || ((sd_char == '#'
+             #if DISABLED(WIFI_PRINT)
+             || sd_char == ':'
+             #endif
+             ) && !sd_comment_mode)
+
       ) {
         if (card_eof) {
           SERIAL_PROTOCOLLNPGM(MSG_FILE_PRINTED);
@@ -6634,6 +6753,47 @@ inline void gcode_M503() {
 
 #endif // DUAL_X_CARRIAGE
 
+/*****************************************************************************
+ * DAGOMA.FR Specific
+ *****************************************************************************/
+#if ENABLED(WIFI_PRINT)
+inline void gcode_D700() {
+  SECOND_SERIAL.print("SSID:");
+  SECOND_SERIAL.println(current_command_args);
+}
+
+inline void gcode_D701() {
+  SECOND_SERIAL.print("PSWD:");
+  SECOND_SERIAL.println(current_command_args);
+}
+
+inline void gcode_D702() {
+  SECOND_SERIAL.println("REDY");
+}
+
+inline void gcode_D710() {
+  SECOND_SERIAL.print("PNAM:");
+  SECOND_SERIAL.println(current_command_args);
+}
+
+inline void gcode_D711() {
+  SECOND_SERIAL.print("APIU:");
+  SECOND_SERIAL.println(current_command_args);
+}
+
+inline void gcode_D712() {
+  SECOND_SERIAL.print("APIK:");
+  SECOND_SERIAL.println(current_command_args);
+}
+
+inline void gcode_D720() {
+  SERIAL_ECHO_START;
+  SERIAL_ECHOPGM("D:");
+  SERIAL_ECHOLN(current_command_args);
+}
+
+#endif
+
 /**
  * M907: Set digital trimpot motor current using axis codes X, Y, Z, E, B, S
  */
@@ -7996,6 +8156,29 @@ void process_next_command() {
       gcode_T(codenum);
       break;
 
+      #if ENABLED(WIFI_PRINT)
+        case 700:
+          gcode_D700(); // SSID
+          break;
+        case 701:
+          gcode_D701(); // PSWD
+          break;
+        case 702:
+          gcode_D702(); // REDY? get ip
+          break;
+        case 710:
+          gcode_D710(); // Tech name
+          break;
+        case 711:
+          gcode_D711(); // API Url
+          break;
+        case 712:
+          gcode_D712(); // API Key
+          break;
+        case 720:
+          gcode_D720(); // ECHO
+          break;
+        #endif
       #if ENABLED( DELTA_EXTRA )
         case 410:
           gcode_D410();
@@ -8940,6 +9123,9 @@ void idle(
   );
   host_keepalive();
   lcd_update();
+  #if ENABLED( WIFI_PRINT )
+    manage_second_serial_status();
+  #endif
 }
 
 /**
