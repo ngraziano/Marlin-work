@@ -51,11 +51,11 @@
 #endif
 
 #include <U8glib.h>
+#include "Configuration.h"
 #include "dogm_bitmaps.h"
 
 #include "ultralcd.h"
 #include "ultralcd_st7920_u8glib_rrd.h"
-#include "Configuration.h"
 
 #if DISABLED(MAPPER_C2C3) && DISABLED(MAPPER_NON) && ENABLED(USE_BIG_EDIT_FONT)
   #undef USE_BIG_EDIT_FONT
@@ -149,7 +149,7 @@
   U8GLIB_LM6059 u8g(DOGLCD_CS, DOGLCD_A0);
 #elif ENABLED(U8GLIB_SSD1306)
   // Generic support for SSD1306 OLED I2C LCDs
-  U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NONE);
+  U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_NONE | U8G_I2C_OPT_FAST);
 #elif ENABLED(MINIPANEL)
   // The MINIPanel display
   U8GLIB_MINI12864 u8g(DOGLCD_CS, DOGLCD_A0);
