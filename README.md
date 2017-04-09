@@ -1,3 +1,39 @@
+# Adaptation et configuration de Marlin pour ma DISCOEASY 200
+
+Ce repository contients les modification par rapport au firmware Marlin standard pour ma DiscoEasy 200.
+
+## Branches
+
+- discoeasy/sans-ecran/RCBugFix-XXXXXXXXXX : Version configuré pour discoeasy basé sur la branche RCBugFix commit XXXXXXXXXXX
+- suividagoma/decoupage : Découpage des modification faite par dagoma par rapport à la RC6 (j'ai essayé de garder une coherence de fonction pas toujours evident).
+
+## Installation
+
+Note a moi même, celà n'est pas un tuto complet.
+
+- Avec l'ancien Fimware Lancer pronterface
+  - ``M503`` : Récuperer la valeur M851 par exemple ``M851 Z-1.40``
+- IDE Arduino
+  - Verfier la présence de U8glib
+  - Ouvrir Marlin.ino
+  - Vérifier Type de carte "Arduino/Genuino Mega 2560"
+  - Processeur "ATMega2560"
+  - Vérifier Port Com
+  - Televerser
+- Pronteface
+  - ``M502`` Reset to default
+  - ``M851 Z-1.40`` Redefinir le Z offset
+  - ``M500`` Sauvegarder EEPROM
+  - ``G28`` Verfier Homming
+  - ``G29`` Bed leveling 
+
+## Option choisi de cette branche
+
+- Bilinear Bed leveling
+- Auto Fan géré façon standard
+- Pas d'écran
+
+
 # Marlin 3D Printer Firmware
 
 [![Build Status](https://travis-ci.org/MarlinFirmware/Marlin.svg?branch=RCBugFix)](https://travis-ci.org/MarlinFirmware/Marlin)
