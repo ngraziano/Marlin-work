@@ -31,6 +31,7 @@ Note a moi même, celà n'est pas un tuto complet.
 
 - Bilinear Bed leveling
 - Auto Fan géré façon standard
+- Autostart par défaut avec ``auto0.g`` au lieu de ``dagoma0.g``
 - Pas d'écran
 
 
