@@ -41,12 +41,16 @@
 #define Y_MAX_PIN 3
 #undef Y_MIN_MIN
 #define Y_MIN_MIN -1
+
 #undef Z_MAX_PIN
-#define Z_MAX_PIN -1
+#define Z_MAX_PIN 15
+
+#undef Z_MIN_PROBE_PIN
+#define Z_MIN_PROBE_PIN 15
+
 #undef Z_MIN_PIN
-#define Z_MIN_PIN 15
-#undef Z_MIN_PIN
-#define Z_MIN_PIN 15
+#define Z_MIN_PIN 14
+
 #undef ORIG_E0_AUTO_FAN_PIN
 #define ORIG_E0_AUTO_FAN_PIN 7
 #undef ORIG_E1_AUTO_FAN_PIN
