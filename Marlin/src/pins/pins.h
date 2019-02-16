@@ -720,6 +720,9 @@
 #elif MB(MKS_TINYBEE)
   #include "esp32/pins_MKS_TINYBEE.h"           // ESP32                                  env:mks_tinybee
 
+#elif MB(DISCOEASY)
+  #include "pins_DISCOEASY.h"
+
 //
 // Adafruit Grand Central M4 (SAMD51 ARM Cortex-M4)
 //
