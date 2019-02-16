@@ -259,4 +259,9 @@
 //
 #define BOARD_ESP32            1900
 
+//
+// Custom discoeasy
+//
+#define BOARD_DISCOEASY         4001   // Discoeasy (MKS BASE 1.0 with special layout)
+
 #define MB(board) (defined(BOARD_##board) && MOTHERBOARD==BOARD_##board)
