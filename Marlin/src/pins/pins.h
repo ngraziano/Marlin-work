@@ -653,6 +653,9 @@
 #elif MB(FYSETC_E4)
   #include "esp32/pins_FYSETC_E4.h"             // ESP32                                  env:FYSETC_E4
 
+#elif MB(DISCOEASY)
+  #include "pins_DISCOEASY.h"
+
 //
 // Adafruit Grand Central M4 (SAMD51 ARM Cortex-M4)
 //

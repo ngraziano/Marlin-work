@@ -422,3 +422,9 @@
 
 #define _MB_1(B)  (defined(BOARD_##B) && MOTHERBOARD==BOARD_##B)
 #define MB(V...)  DO(MB,||,V)
+
+//
+// Custom discoeasy
+//
+#define BOARD_DISCOEASY               3201   // Discoeasy (MKS BASE 1.0 with special layout)
+
