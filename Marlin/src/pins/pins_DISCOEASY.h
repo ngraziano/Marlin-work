@@ -26,7 +26,7 @@
 
 
 
-#include "pins_MKS_BASE.h"
+#include "pins_MKS_BASE_14.h"
 
 // redfine for DISCOEASY
 #undef BOARD_NAME
@@ -55,6 +55,8 @@
 #undef X_MAX_PIN
 #undef Y_MIN_PIN
 
+#undef PS_ON_PIN
+#define PS_ON_PIN        66
 
 
 // TODO watch if necessary
