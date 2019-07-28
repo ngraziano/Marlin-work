@@ -50,6 +50,11 @@
 #undef ORIG_E0_AUTO_FAN_PIN
 #define ORIG_E0_AUTO_FAN_PIN 7
 
+#undef TEMP_BED_PIN
+#define TEMP_BED_PIN       15   // Analog Input
+
+static_assert(HEATER_BED_PIN == 8, "PIN 8");
+
 // Pin not used
 #undef HEATER_1_PIN
 #undef X_MAX_PIN
