@@ -200,6 +200,9 @@
 #elif MB(LONGER3D_LK1_PRO, LONGER3D_LKx_PRO)
   #include "ramps/pins_LONGER3D_LKx_PRO.h"      // ATmega2560                             env:mega2560
 
+#elif MB(DISCOEASY)
+  #include "ramps/pins_DISCOEASY.h"             // ATmega2560                             env:mega2560
+
 //
 // RAMBo and derivatives
 //
@@ -719,9 +722,6 @@
   #include "esp32/pins_PANDA_M4.h"              // ESP32                                  env:PANDA
 #elif MB(MKS_TINYBEE)
   #include "esp32/pins_MKS_TINYBEE.h"           // ESP32                                  env:mks_tinybee
-
-#elif MB(DISCOEASY)
-  #include "pins_DISCOEASY.h"
 
 //
 // Adafruit Grand Central M4 (SAMD51 ARM Cortex-M4)
