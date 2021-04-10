@@ -921,7 +921,6 @@
  *      - normally-open switches to 5V and D32.
  */
 //#define Z_MIN_PROBE_PIN 32 // Pin 32 is the RAMPS default
-#define Z_MIN_PROBE_ENDSTOP
 
 /**
  * Probe Type
@@ -1104,8 +1103,6 @@
  */
 #define MULTIPLE_PROBING 3
 #define EXTRA_PROBING    1
-// Feedrate (mm/m) for the "accurate" probe of each point
-#define Z_PROBE_SPEED_SLOW (Z_PROBE_SPEED_FAST / 3)
 
 /**
  * Z probes require clearance when deploying, stowing, and moving between

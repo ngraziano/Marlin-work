@@ -47,8 +47,8 @@
 #undef Z_MIN_PIN
 #define Z_MIN_PIN 14
 
-#undef ORIG_E0_AUTO_FAN_PIN
-#define ORIG_E0_AUTO_FAN_PIN 7
+#undef E0_AUTO_FAN_PIN
+#define E0_AUTO_FAN_PIN 7
 
 #undef TEMP_BED_PIN
 #define TEMP_BED_PIN       15   // Analog Input
@@ -67,6 +67,6 @@
 
 
 // TODO watch if necessary
-#undef ORIG_E1_AUTO_FAN_PIN
-#undef ORIG_E2_AUTO_FAN_PIN
-#undef ORIG_E4_AUTO_FAN_PIN
+#undef E1_AUTO_FAN_PIN
+#undef E2_AUTO_FAN_PIN
+#undef E4_AUTO_FAN_PIN
